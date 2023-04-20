@@ -54,6 +54,8 @@ lazy_static! {
         let mut tasks = [TaskControlBlock {
             task_cx: TaskContext::zero_init(),
             task_status: TaskStatus::UnInit,
+            start_time_ms:0,
+            syscall_times:[0;crate::config::MAX_SYSCALL_NUM]
         }; MAX_APP_NUM];
         for (i, task) in tasks.iter_mut().enumerate() {
             task.task_cx = TaskContext::goto_restore(init_app_cx(i));
@@ -120,6 +122,9 @@ impl TaskManager {
     fn run_next_task(&self) {
         if let Some(next) = self.find_next_task() {
             let mut inner = self.inner.exclusive_access();
+            if inner.tasks[next].task_status == TaskStatus::UnInit {
+                inner.tasks[next].start_time_ms = crate::timer::get_time_ms();
+            }
             let current = inner.current_task;
             inner.tasks[next].task_status = TaskStatus::Running;
             inner.current_task = next;
@@ -134,6 +139,21 @@ impl TaskManager {
         } else {
             panic!("All applications completed!");
         }
+    }
+    fn record_intr(&self,intr:usize){
+        let mut inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        inner.tasks[current].syscall_times[intr] += 1;
+    }
+    fn get_intr_record(&self)->[u32;crate::config::MAX_SYSCALL_NUM]{
+        let inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        inner.tasks[current].syscall_times
+    }
+    fn get_start_time(&self)->usize{
+        let inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        inner.tasks[current].start_time_ms
     }
 }
 
@@ -168,4 +188,16 @@ pub fn suspend_current_and_run_next() {
 pub fn exit_current_and_run_next() {
     mark_current_exited();
     run_next_task();
+}
+/// record current process intr 
+pub fn record_current_intr(intr:usize){
+    TASK_MANAGER.record_intr(intr);
+}
+/// get current process intr record 
+pub fn get_current_intr_record()->[u32;crate::config::MAX_SYSCALL_NUM]{
+    TASK_MANAGER.get_intr_record()
+}
+/// get current process start time
+pub fn get_current_start_time()->usize{
+    TASK_MANAGER.get_start_time()
 }
