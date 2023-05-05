@@ -138,6 +138,11 @@ impl TaskManager {
     fn run_next_task(&self) {
         if let Some(next) = self.find_next_task() {
             let mut inner = self.inner.exclusive_access();
+/*######################################################################## */
+            if inner.tasks[next].task_status == TaskStatus::UnInit {
+                inner.tasks[next].start_time_ms = crate::timer::get_time_ms();
+            }
+/*######################################################################## */
             let current = inner.current_task;
             inner.tasks[next].task_status = TaskStatus::Running;
             inner.current_task = next;
@@ -153,6 +158,40 @@ impl TaskManager {
             panic!("All applications completed!");
         }
     }
+    ///
+    fn get_current_task(&self)->usize{
+        let inner = self.inner.exclusive_access();
+        inner.current_task
+    }
+/*################################################ */
+fn record_intr(&self,intr:usize){
+    let mut inner = self.inner.exclusive_access();
+    let current = inner.current_task;
+    inner.tasks[current].syscall_times[intr] += 1;
+}
+fn get_intr_record(&self)->[u32;crate::config::MAX_SYSCALL_NUM]{
+    let inner = self.inner.exclusive_access();
+    let current = inner.current_task;
+    inner.tasks[current].syscall_times
+}
+fn get_start_time(&self)->usize{
+    let inner = self.inner.exclusive_access();
+    let current = inner.current_task;
+    inner.tasks[current].start_time_ms
+}
+/// 
+fn mmap(&self,vpn:crate::mm::VirtPageNum,flags:crate::mm::PTEFlags) {
+    let mut inner = self.inner.exclusive_access();
+    let current_task = inner.current_task;
+    inner.tasks[current_task].memory_set.page_table.map_anonymous(vpn, flags);
+}
+/// 
+fn unmap(&self,vpn:crate::mm::VirtPageNum) {
+    let mut inner = self.inner.exclusive_access();
+    let current_task = inner.current_task;
+    inner.tasks[current_task].memory_set.page_table.unmap_anonymous(vpn);
+}
+/*############################################### */
 }
 
 /// Run the first task in task list.
@@ -202,3 +241,30 @@ pub fn current_trap_cx() -> &'static mut TrapContext {
 pub fn change_program_brk(size: i32) -> Option<usize> {
     TASK_MANAGER.change_current_program_brk(size)
 }
+/*##################################################### */
+/// record current process intr 
+pub fn record_current_intr(intr:usize){
+    TASK_MANAGER.record_intr(intr);
+}
+/// get current process intr record 
+pub fn get_current_intr_record()->[u32;crate::config::MAX_SYSCALL_NUM]{
+    TASK_MANAGER.get_intr_record()
+}
+/// get current process start time
+pub fn get_current_start_time()->usize{
+    TASK_MANAGER.get_start_time()
+}
+
+/// 
+pub fn task_mmap(vpn:crate::mm::VirtPageNum,flags:crate::mm::PTEFlags){
+    TASK_MANAGER.mmap(vpn, flags);
+}
+/// 
+pub fn task_unmap(vpn:crate::mm::VirtPageNum){
+    TASK_MANAGER.unmap(vpn);
+}
+///
+pub fn get_current_task()->usize{
+    TASK_MANAGER.get_current_task()
+}
+/*##################################################### */

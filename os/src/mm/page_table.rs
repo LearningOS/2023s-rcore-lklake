@@ -8,13 +8,21 @@ use bitflags::*;
 bitflags! {
     /// page table entry flags
     pub struct PTEFlags: u8 {
+        ///
         const V = 1 << 0;
+        ///
         const R = 1 << 1;
+        ///
         const W = 1 << 2;
+        ///
         const X = 1 << 3;
+        ///
         const U = 1 << 4;
+        ///
         const G = 1 << 5;
+        ///
         const A = 1 << 6;
+        ///
         const D = 1 << 7;
     }
 }
@@ -147,6 +155,25 @@ impl PageTable {
     pub fn token(&self) -> usize {
         8usize << 60 | self.root_ppn.0
     }
+/*################################################## */
+    ///
+    pub fn map_anonymous(&mut self, vpn: VirtPageNum, flags: PTEFlags) {
+        let pte = self.find_pte_create(vpn).unwrap();
+        assert!(!pte.is_valid(), "vpn {:?} is mapped before mapping", vpn);
+        let frame  = frame_alloc().unwrap();
+        *pte = PageTableEntry::new(frame.ppn, flags | PTEFlags::V);
+        self.frames.push(frame);
+    }
+    ///
+    pub fn unmap_anonymous(&mut self, vpn: VirtPageNum) {
+        let pte = self.find_pte(vpn).unwrap();
+        assert!(pte.is_valid(), "vpn {:?} is invalid before unmapping", vpn);
+        let index = self.frames.iter().position(|x| (*x).ppn == (*pte).ppn()).unwrap();
+        *pte = PageTableEntry::empty();
+        self.frames.remove(index);
+    }
+/*################################################## */
+
 }
 
 /// Translate&Copy a ptr[u8] array with LENGTH len to a mutable u8 Vec through page table
@@ -171,3 +198,40 @@ pub fn translated_byte_buffer(token: usize, ptr: *const u8, len: usize) -> Vec<&
     }
     v
 }
+
+/*############################################ */
+///
+pub fn copy_to_user(token: usize,kernel_ptr : *const u8,user_ptr:*const u8, len: usize) {
+    let page_table = PageTable::from_token(token);
+    let mut u_start = user_ptr as usize;
+    let u_end = u_start + len;
+
+    let mut kernel_pagetable = PageTable::from_token(crate::mm::KERNEL_SPACE.exclusive_access().token());
+
+    let mut k_va = VirtAddr(kernel_ptr as usize);
+    
+    while u_start < u_end {
+        kernel_pagetable.map(
+            VirtAddr( crate::config::MEMORY_END+crate::config::PAGE_SIZE).floor(), 
+            page_table.translate(VirtAddr(u_start as usize).floor()).unwrap().ppn(), 
+            PTEFlags::R | PTEFlags::W
+        );
+        debug!("copy_to_user mapped");
+
+        let u_va: VirtAddr = VirtAddr( crate::config::MEMORY_END +crate::config::PAGE_SIZE+ VirtAddr(u_start as usize).page_offset());
+        let copy_len = core::cmp::min(u_end - u_start, crate::config::PAGE_SIZE - VirtAddr(u_start as usize).page_offset());
+
+        u_start += copy_len;
+        unsafe{
+             let from = core::slice::from_raw_parts_mut((u_va.0 )as *mut u8, copy_len);
+             let to = core::slice::from_raw_parts_mut((k_va.0 )as *mut u8, copy_len);
+             from.copy_from_slice(to);
+        }
+        
+        k_va = VirtAddr(k_va.0 + copy_len);
+        
+        kernel_pagetable.unmap(VirtAddr( crate::config::MEMORY_END +crate::config::PAGE_SIZE).floor());
+        debug!("copy_to_user unmapped");
+    }
+}
+/*############################################ */

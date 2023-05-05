@@ -28,6 +28,12 @@ pub struct TaskControlBlock {
 
     /// Program break
     pub program_brk: usize,
+/*######################################################### */
+    /// Task start time in ms
+    pub start_time_ms:usize,
+    /// syscalls task has emit
+    pub syscall_times: [u32; crate::config::MAX_SYSCALL_NUM],
+/*######################################################### */
 }
 
 impl TaskControlBlock {
@@ -63,6 +69,10 @@ impl TaskControlBlock {
             base_size: user_sp,
             heap_bottom: user_sp,
             program_brk: user_sp,
+/*################################################################# */
+            start_time_ms:0,
+            syscall_times:[0;crate::config::MAX_SYSCALL_NUM]
+/*################################################################# */
         };
         // prepare TrapContext in user space
         let trap_cx = task_control_block.get_trap_cx();
