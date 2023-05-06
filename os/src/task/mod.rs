@@ -42,6 +42,11 @@ pub fn suspend_current_and_run_next() {
 
     // ---- access current TCB exclusively
     let mut task_inner = task.inner_exclusive_access();
+/*######################################################################## */
+    if task_inner.task_status == TaskStatus::UnInit {
+        task_inner.start_time_ms = crate::timer::get_time_ms();
+    }
+/*######################################################################## */
     let task_cx_ptr = &mut task_inner.task_cx as *mut TaskContext;
     // Change status to Ready
     task_inner.task_status = TaskStatus::Ready;
@@ -115,3 +120,36 @@ lazy_static! {
 pub fn add_initproc() {
     add_task(INITPROC.clone());
 }
+
+/*################################################ */
+///
+pub fn record_current_intr(intr:usize){
+    let task = current_task().unwrap();
+    let mut task_inner = task.inner_exclusive_access();
+    task_inner.syscall_times[intr] += 1;
+}
+///
+pub fn get_current_intr_record()->[u32;crate::config::MAX_SYSCALL_NUM]{
+    let task = current_task().unwrap();
+    let task_inner = task.inner_exclusive_access();
+    task_inner.syscall_times
+}
+///
+pub fn get_current_start_time()->usize{
+    let task = current_task().unwrap();
+    let task_inner = task.inner_exclusive_access();
+    task_inner.start_time_ms
+}
+/// 
+pub fn task_mmap(vpn:crate::mm::VirtPageNum,flags:crate::mm::PTEFlags) {
+    let task = current_task().unwrap();
+    let mut task_inner = task.inner_exclusive_access();
+    task_inner.memory_set.page_table.map_anonymous(vpn, flags);
+}
+/// 
+pub fn task_unmap(vpn:crate::mm::VirtPageNum) {
+    let task = current_task().unwrap();
+    let mut task_inner = task.inner_exclusive_access();
+    task_inner.memory_set.page_table.unmap_anonymous(vpn);
+}
+/*############################################### */

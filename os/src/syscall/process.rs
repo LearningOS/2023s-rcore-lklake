@@ -117,42 +117,168 @@ pub fn sys_waitpid(pid: isize, exit_code_ptr: *mut i32) -> isize {
 /// YOUR JOB: get time with second and microsecond
 /// HINT: You might reimplement it with virtual memory management.
 /// HINT: What if [`TimeVal`] is splitted by two pages ?
+/*####################################################### */
+
 pub fn sys_get_time(_ts: *mut TimeVal, _tz: usize) -> isize {
-    trace!(
-        "kernel:pid[{}] sys_get_time NOT IMPLEMENTED",
-        current_task().unwrap().pid.0
-    );
-    -1
+    trace!("kernel: sys_get_time");
+    let us = crate::timer::get_time_us();
+    let _time_val = TimeVal {
+            sec: us / 1_000_000,
+            usec: us % 1_000_000,
+    };
+
+    crate::mm::copy_to_user(crate::task::current_user_token(),&_time_val as *const TimeVal as *const u8 ,_ts as *const u8,core::mem::size_of::<TimeVal>());
+    0
 }
+/*####################################################### */
 
 /// YOUR JOB: Finish sys_task_info to pass testcases
 /// HINT: You might reimplement it with virtual memory management.
 /// HINT: What if [`TaskInfo`] is splitted by two pages ?
+/*####################################################### */
+
 pub fn sys_task_info(_ti: *mut TaskInfo) -> isize {
-    trace!(
-        "kernel:pid[{}] sys_task_info NOT IMPLEMENTED",
-        current_task().unwrap().pid.0
-    );
-    -1
+    trace!("kernel: sys_task_info");
+        
+    let _task_info = TaskInfo{
+            status : TaskStatus::Running,
+            syscall_times : crate::task::get_current_intr_record(),
+            time : crate::timer::get_time_ms() - crate::task::get_current_start_time(),
+    };
+    crate::mm::copy_to_user(crate::task::current_user_token(),&_task_info as *const TaskInfo as *const u8 ,_ti as *const u8,core::mem::size_of::<TaskInfo>());
+    0
 }
+/*####################################################### */
 
 /// YOUR JOB: Implement mmap.
+/*####################################################### */
+
 pub fn sys_mmap(_start: usize, _len: usize, _port: usize) -> isize {
-    trace!(
-        "kernel:pid[{}] sys_mmap NOT IMPLEMENTED",
-        current_task().unwrap().pid.0
-    );
-    -1
+    trace!("kernel: sys_mmap NOT IMPLEMENTED YET!");
+
+    // fall early
+
+    if(_port & (!0x7)) !=0{
+        error!("mmap:port contain dirty bits:{}",_port);
+        return -1;
+    }
+    if(_port & 0x7) == 0 {
+        error!("mmap:request non R or W or X memory is meaningless:{}",_port);
+        return -1;
+    }
+    if _start % crate::config::PAGE_SIZE != 0 {
+        error!("mmap:start address is not page aligned:{}",_port);
+        return -1;
+    }
+    if _len == 0{
+        return 0;
+    }
+    if _len > 1024 * 1024 * 1024 {
+        error!("mmap:too large");
+        return -1;
+    }
+
+    // do the job
+
+    let mut perm: crate::mm::PTEFlags = crate::mm::PTEFlags::U;
+    info!("mmap:{}",_port);
+    if (_port & 0b1) != 0 {
+        perm |= crate::mm::PTEFlags::R;
+        info!("mmap:R");
+    }
+    if (_port & 0b10 ) != 0{
+        perm |= crate::mm::PTEFlags::W;
+        info!("mmap:W");
+    }
+    if (_port & 0b100 ) != 0{
+        perm |= crate::mm::PTEFlags::X;
+        info!("mmap:X");
+    }
+    info!("perm:{}",perm.bits());
+    let pagetable = crate::mm::PageTable::from_token(crate::task::current_user_token());
+
+    let mut start = _start;
+    let end = _start + _len;
+    while start < end {
+        let pte = pagetable.translate(crate::mm::VirtAddr( start).floor());
+        if pte.is_some() && pte.unwrap().is_valid() {
+            error!("mmap:already exist {:#x}",start);
+            return -1;
+        }
+        start += crate::config::PAGE_SIZE;
+    }
+    start = _start;
+    while start < end {
+        println!("mapping:{:#x} {}",start,crate::mm::VirtAddr( start).floor().0);
+        crate::task::task_mmap(
+            crate::mm::VirtAddr( start).floor(), 
+            perm
+        );
+        
+        let pte = pagetable.translate(crate::mm::VirtAddr( start).floor());
+        if pte.is_none() {
+            error!("mmap:pte is null {:#x}",start);
+            return -1;
+        }
+        if !pte.unwrap().is_valid(){
+            error!("mmap:pte not valid {:#x}",start);
+            return -1;
+        }
+
+        start += crate::config::PAGE_SIZE;
+    }
+    return 0;
 }
+/*####################################################### */
 
 /// YOUR JOB: Implement munmap.
+/*####################################################### */
 pub fn sys_munmap(_start: usize, _len: usize) -> isize {
-    trace!(
-        "kernel:pid[{}] sys_munmap NOT IMPLEMENTED",
-        current_task().unwrap().pid.0
-    );
-    -1
+    trace!("kernel: sys_munmap NOT IMPLEMENTED YET!");
+
+    // fall early
+    let start_va = crate::mm::VirtAddr(_start);
+    if !start_va.aligned(){
+        error!("munmap:start address is not page aligned");
+        return -1;
+    }
+
+    if _len == 0{
+        return 0;
+    }
+    if _len % crate::config::PAGE_SIZE != 0{
+        // not specified, choose to up align len
+    }
+    // let pagetable = &mut crate::task::get_current_task().memory_set.page_table;
+
+    let pagetable = crate::mm::PageTable::from_token(crate::task::current_user_token());
+    let mut start = _start;
+    let end = _start +_len;
+
+    while start < end {
+        println!("unmapping:{:#x} {}",start,crate::mm::VirtAddr( start).floor().0);
+        let pte = pagetable.translate(crate::mm::VirtAddr( start).floor());
+        if pte.is_none() {
+            error!("munmap:pte is null {:#x}",start);
+            return -1;
+        }
+        if !pte.unwrap().is_valid(){
+            error!("munmap:pte not valid {:#x}",start);
+            return -1;
+        }
+        start += crate::config::PAGE_SIZE;
+    }
+    start = _start;
+
+    while start < end {
+        crate::task::task_unmap(
+            crate::mm::VirtAddr( start).floor(), 
+        );
+        start += crate::config::PAGE_SIZE;
+    }
+    return 0;
 }
+/*####################################################### */
 
 /// change data segment size
 pub fn sys_sbrk(size: i32) -> isize {
@@ -164,6 +290,7 @@ pub fn sys_sbrk(size: i32) -> isize {
     }
 }
 
+/*########################################################## */
 /// YOUR JOB: Implement spawn.
 /// HINT: fork + exec =/= spawn
 pub fn sys_spawn(_path: *const u8) -> isize {
@@ -171,14 +298,36 @@ pub fn sys_spawn(_path: *const u8) -> isize {
         "kernel:pid[{}] sys_spawn NOT IMPLEMENTED",
         current_task().unwrap().pid.0
     );
-    -1
-}
+    let token = current_user_token();
+    let path = translated_str(token, _path);
 
+    if let Some(data) = get_app_data_by_name(path.as_str()) {
+        let new_task = current_task().unwrap().spawn(data);
+        let new_pid = new_task.pid.0;
+        // modify trap context of new_task, because it returns immediately after switching
+        let trap_cx = new_task.inner_exclusive_access().get_trap_cx();
+        // we do not have to move to next instruction since we have done it before
+        // for child process, fork returns 0
+        trap_cx.x[10] = 0;
+        // add new task to scheduler
+        add_task(new_task);
+        new_pid as isize
+    } else {
+        -1
+    }
+}
+/*########################################################## */
 // YOUR JOB: Set task priority.
+/*########################################################## */
 pub fn sys_set_priority(_prio: isize) -> isize {
     trace!(
         "kernel:pid[{}] sys_set_priority NOT IMPLEMENTED",
         current_task().unwrap().pid.0
     );
-    -1
+    if _prio < 2{
+        return -1;
+    }
+    current_task().unwrap().inner_exclusive_access().priority = _prio as u64;
+    _prio
 }
+/*########################################################## */
